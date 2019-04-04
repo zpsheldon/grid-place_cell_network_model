@@ -55,7 +55,7 @@ def calculate_field(r,r_dir, rwu_l, rwu_r, rwu_d, rwu_u,r_masks, a, vgain_fac, h
         
         r_field_mask = r_masks[0:n,0:n]
        
-        r_field_dir[:,:,:]= (rwu_l[:,0:n,0:n] + rwu_r[:,0:n,0:n] + rwu_u[:,0:n,0:n] + rwu_d[:,0:n,0:n] + a * vgain_fac + p*0)*r_field_mask; #TODO - remove 0 for actual experiment
+        r_field_dir[:,:,:]= (rwu_l[:,0:n,0:n] + rwu_r[:,0:n,0:n] + rwu_u[:,0:n,0:n] + rwu_d[:,0:n,0:n] + a * vgain_fac + p)*r_field_mask;
                   
         return r_dir, r_field_dir
         
