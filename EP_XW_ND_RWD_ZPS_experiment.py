@@ -23,8 +23,8 @@ h = 1; # Number of depths, 1
 n = 160; # number of neurons per side in grid tile,  160 in Louis paper, 128 in Alex's new, 90 in Alex OG
 dt = 1.0 # in milliseconds #note code has dividing  by tau throughout so this works out to actually being 1ms , this is a holdover from a mistake reading Louis' model
 tau = 10.0 # neuron time constant in ms
-num_minutes = 10 # total number of minutes of traj data to use
-num_blocks = 1 # number of blocks to use for experiment
+num_minutes = 20 # total number of minutes of traj data to use
+num_blocks = 2 # number of blocks to use for experiment
 
 # Place Cell Parameters
 n_place_cells = 16 # number of place cells
@@ -301,11 +301,11 @@ def flow_full_model_with_blocks(x, y, vx,vy,time_ind,num_blocks,a,spike,spiking,
             # update neuron activity for grid cells
             [r,r_field, r_l, r_u, r_d, r_r,sna_eachlayer, w_pg_B] = update_neuron_activity_with_place(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx1,vy1,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record,curr_place_activity_B, w_pg_B)
 
-#        # grab r matrix after map changes
-#        if itter == time_ind/2 + 100:
-#            r_exp_blocks[0, :, :] = r[0, :, :]
-#        elif itter == time_ind - 1:
-#            r_exp_blocks[1, :, :] = r[0, :, :]
+        # grab r matrix after map changes
+        if itter == time_ind/2 + 100:
+            r_exp_blocks[0, :, :] = r[0, :, :]
+        elif itter == time_ind - 1:
+            r_exp_blocks[1, :, :] = r[0, :, :]
         
     return r, r_exp_blocks, sna_eachlayer,w_pg_A, place_cell_spiking_A, place_activity_A, w_pg_B, place_cell_spiking_B, place_activity_B
 
@@ -337,24 +337,24 @@ def run_light_switch_experiment(x,y,vx,vy,time_ind,num_blocks,a,spike,spiking,r,
 [r, r_exp_blocks, sna_eachlayer,w_pg_A, place_cell_spiking_A, place_activity_A,w_pg_B, place_cell_spiking_B, place_activity_B] = run_light_switch_experiment(x,y,vx,vy,time_ind,num_blocks,a,spike,spiking,r,r_r,r_l,r_d,r_u,singleneuronrec,w_pg_A, place_cells_A, place_cell_spiking_A, place_activity_A,w_pg_B, place_cells_B, place_cell_spiking_B, place_activity_B)
 
 # convert sna_eachlayer into sna_eachlayer for each block
-#sna_eachlayer_blocks = np.zeros((num_blocks, 3, block_length))
-#for curr_block_num in range(0, num_blocks):
-#    start_block = block_length * curr_block_num
-#    end_block = start_block + block_length
-#    sna_eachlayer_blocks[curr_block_num,:,:] = sna_eachlayer[0, :, start_block:end_block]
+sna_eachlayer_blocks = np.zeros((num_blocks, 3, block_length))
+for curr_block_num in range(0, num_blocks):
+    start_block = block_length * curr_block_num
+    end_block = start_block + block_length
+    sna_eachlayer_blocks[curr_block_num,:,:] = sna_eachlayer[0, :, start_block:end_block]
 
 ###################### PLOT RESULTS ###############################
 
 # plot activity level from r matrix
-#plt.figure(figsize=(5,5))
-#plt.imshow(r_exp_blocks[0], cmap='hot')
-#plt.title('Activity Matrix for Block 1')
-#plt.gca().invert_yaxis()
-#
-#plt.figure(figsize=(5,5))
-#plt.imshow(r_exp_blocks[1], cmap='hot')
-#plt.title('Activity Matrix for Block 2')
-#plt.gca().invert_yaxis()
+plt.figure(figsize=(5,5))
+plt.imshow(r_exp_blocks[0], cmap='hot')
+plt.title('Activity Matrix for Block 1')
+plt.gca().invert_yaxis()
+
+plt.figure(figsize=(5,5))
+plt.imshow(r_exp_blocks[1], cmap='hot')
+plt.title('Activity Matrix for Block 2')
+plt.gca().invert_yaxis()
 
 # calculate sns
 sns_eachlayer=np.zeros((sna_eachlayer.shape))
@@ -374,52 +374,52 @@ plt.plot(x,y)
 plt.plot(x_ind[sns_eachlayer[0,0,0:np.size(x_ind)]]*spatial_scale, y_ind[sns_eachlayer[0,0,0:np.size(x_ind)]]*spatial_scale,'r.')
 
 ## plot sns for block 1
-#sna_eachlayer_block1 = sna_eachlayer_blocks[0,:,:]
-#sna_eachlayer_block1 = sna_eachlayer_block1.reshape((1,3,block_length))
-#sns_eachlayer_block1=np.zeros((1,3,block_length))
-#print('Calculating block 1 single neuron spiking results...')
-#for inds in range(0,block_length,1):
-#    sns_eachlayer_block1[:,:,inds] = sna_eachlayer_block1[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
-#    
-#sns_eachlayer_block1=sns_eachlayer_block1.astype('bool')
-#
-#x_ind = np.reshape(x_ind,(x_ind.size, 1))
-#y_ind = np.reshape(y_ind,(y_ind.size, 1))
+sna_eachlayer_block1 = sna_eachlayer_blocks[0,:,:]
+sna_eachlayer_block1 = sna_eachlayer_block1.reshape((1,3,block_length))
+sns_eachlayer_block1=np.zeros((1,3,block_length))
+print('Calculating block 1 single neuron spiking results...')
+for inds in range(0,block_length,1):
+    sns_eachlayer_block1[:,:,inds] = sna_eachlayer_block1[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
+    
+sns_eachlayer_block1=sns_eachlayer_block1.astype('bool')
+
+x_ind = np.reshape(x_ind,(x_ind.size, 1))
+y_ind = np.reshape(y_ind,(y_ind.size, 1))
 #"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
-#print('Plotting grid cell results over trajectory for block 1...')
-#x1 = x[:block_length]
-#y1 = y[:block_length]
-#x_ind1 = x_ind[:block_length]
-#y_ind1 = y_ind[:block_length]
-#plt.figure(figsize=(5,5))
-#plt.plot(x1,y1)
-#plt.plot(x_ind1[sns_eachlayer_block1[0,0,0:np.size(x_ind1)]]*spatial_scale, y_ind1[sns_eachlayer_block1[0,0,0:np.size(x_ind1)]]*spatial_scale,'r.')
-#
-### plot sns for block 2
-#sna_eachlayer_block2 = sna_eachlayer_blocks[1,:,:]
-#sna_eachlayer_block2 = sna_eachlayer_block2.reshape((1,3,block_length))
-#sns_eachlayer_block2=np.zeros((1,3,block_length))
-#print('Calculating single neuron spiking results for block 2...')
-#for inds in range(0,block_length,1):
-#    sns_eachlayer_block2[:,:,inds] = sna_eachlayer_block2[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
-#    
-#sns_eachlayer_block2=sns_eachlayer_block2.astype('bool')
-#
+print('Plotting grid cell results over trajectory for block 1...')
+x1 = x[:block_length]
+y1 = y[:block_length]
+x_ind1 = x_ind[:block_length]
+y_ind1 = y_ind[:block_length]
+plt.figure(figsize=(5,5))
+plt.plot(x1,y1)
+plt.plot(x_ind1[sns_eachlayer_block1[0,0,0:np.size(x_ind1)]]*spatial_scale, y_ind1[sns_eachlayer_block1[0,0,0:np.size(x_ind1)]]*spatial_scale,'r.')
+
+## plot sns for block 2
+sna_eachlayer_block2 = sna_eachlayer_blocks[1,:,:]
+sna_eachlayer_block2 = sna_eachlayer_block2.reshape((1,3,block_length))
+sns_eachlayer_block2=np.zeros((1,3,block_length))
+print('Calculating single neuron spiking results for block 2...')
+for inds in range(0,block_length,1):
+    sns_eachlayer_block2[:,:,inds] = sna_eachlayer_block2[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
+    
+sns_eachlayer_block2=sns_eachlayer_block2.astype('bool')
+
 #"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
-#print('Plotting grid cell results over trajectory for block 2...')
-#x2 = x[block_length:block_length*2]
-#y2 = y[block_length:block_length*2]
-#x_ind2 = x_ind[block_length:block_length*2]
-#y_ind2 = y_ind[block_length:block_length*2]
-#plt.figure(figsize=(5,5))
-#plt.plot(x2,y2)
-#plt.plot(x_ind2[sns_eachlayer_block2[0,0,0:np.size(x_ind2)]]*spatial_scale, y_ind2[sns_eachlayer_block2[0,0,0:np.size(y_ind2)]]*spatial_scale,'r.')
+print('Plotting grid cell results over trajectory for block 2...')
+x2 = x[block_length:block_length*2]
+y2 = y[block_length:block_length*2]
+x_ind2 = x_ind[block_length:block_length*2]
+y_ind2 = y_ind[block_length:block_length*2]
+plt.figure(figsize=(5,5))
+plt.plot(x2,y2)
+plt.plot(x_ind2[sns_eachlayer_block2[0,0,0:np.size(x_ind2)]]*spatial_scale, y_ind2[sns_eachlayer_block2[0,0,0:np.size(y_ind2)]]*spatial_scale,'r.')
 
 # save variables/arrays
 var_out = dict()
 for i_vars in ('x', 'y', 'x_ind', 'y_ind', 'sna_eachlayer', 'sns_eachlayer', 'spatial_scale', 'r'):
     var_out[i_vars] = locals()[i_vars]
 cwd = os.getcwd()
-io.savemat('grid_and_noplace_10min', var_out)
+io.savemat('grid_and_place_20min_1switch', var_out)
 
 
