@@ -1,5 +1,5 @@
 # Senior_Honors_Thesis
-Code for my senior honors thesis in cognitive science: a continuous attractor network model of grid cells that incorporates place cell input
+Code for my senior honors thesis in cognitive science: a Continuous Attractor Network (CAN) model of grid cells that incorporates place cell input
 
 # Overview
 All trajectory files from the Hasselmo lab are included in this repository (though I only use 3 different trajectory datasets
