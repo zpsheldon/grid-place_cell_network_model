@@ -9,11 +9,12 @@ import pyfftw
 from scipy import stats, io
 import EP_XW_ND_RWD_SetupNetwork as SN
 import EP_XW_ND_RWD_RunNetwork as RN
+import place_cell_utilities as PCU
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-np.random.seed(1234)
+np.random.seed(1)
 UNDEF = -999
 
 ######################## NETWORK PARAMETERS ####################
@@ -29,6 +30,7 @@ num_blocks = 2 # number of blocks to use for experiment
 # Place Cell Parameters
 n_place_cells = 16 # number of place cells
 sigma = 5.0 # standard deviation for Gaussian place fields
+norm_const = 0.00636371 # normalization constant for place cells with sigma = 5.0
 x_dim = 130 # x dimension for environment - cm
 y_dim = 130 # y dimension for environment - cm
 dist_thresh = 20 # min euclidean distance between place cell centers - cm
@@ -77,7 +79,7 @@ nflow1 = 5000 #flow populations activity with constant velocity
 
 # system noise
 rnoise = 0.0 
-vgain = .4
+vgain = 0.4
 
 still = 0 # no motion if true; clears vx and vy from loaded or simulated trajectory
 
@@ -85,7 +87,7 @@ if still:
     vx = 0
     vy = 0
     
-vflow = .8 
+vflow = 0.8 
 theta_flow = UNDEF
 
 ## spiking simulation
@@ -95,16 +97,18 @@ spike = 0
 
 ######################## LOAD VARIABLES #######################
 print('Loading place cells...')
-vars_a = io.loadmat('grid_and_place_simulation_map_a_20min')
+vars_a = io.loadmat('grid_and_place_training_map_a_20min')
 w_pg_A = vars_a['w_pg_a']
-vars_b = io.loadmat('grid_and_place_simulation_map_b_20min')
-w_pg_B = vars_b['w_pg_B']
+vars_b = io.loadmat('grid_and_place_training_map_b_20min')
+w_pg_B = vars_b['w_pg_b']
 
 # check that boundaries are similar
 [x,y,x_ind,y_ind, x_of_bins,y_of_bins,vx,vy,spatial_scale, boundaries8, time_ind, traj_filename] = SN.get_trajectory('Trajectory_Data_8_full',dt, num_minutes) # traj for experiment
+
 # update x and y to be interpolated
 x = x_ind * spatial_scale
 y = y_ind * spatial_scale
+
 # length of each block
 block_length = int(time_ind/num_blocks) 
 
@@ -119,40 +123,7 @@ place_cells_B = pickle.load(pickle_inB)
 place_cell_spiking_A, place_activity_A = np.zeros((n_place_cells, len(x))), np.zeros((n_place_cells, len(x)))
 place_cell_spiking_B, place_activity_B = np.zeros((n_place_cells, len(x))), np.zeros((n_place_cells, len(x)))
 
-# plot gaussian place cell centers
-def plot_centers(place_cells, dist_thresh):
-    # check if any are within distance threshold
-    for i in range(0, n_place_cells):
-        curr_x_center, curr_y_center = place_cells[i].get_centers()
-        for j in range(i+1, n_place_cells):
-            curr_x_to_compare, curr_y_to_compare = place_cells[j].get_centers()
-            curr_dist = np.sqrt((curr_x_to_compare - curr_x_center)**2 + (curr_y_to_compare - curr_y_center)**2)
-            if curr_dist <= dist_thresh:
-                print('Place centers too close: ', (curr_x_center, curr_y_center), (curr_x_to_compare, curr_y_to_compare), int(curr_dist))
-
-    p_centers = np.zeros((x_dim, y_dim))
-    for i in range(0, len(place_cells)):
-        curr_x_center, curr_y_center = place_cells[i].get_centers()
-        for j in range(0, x_dim):
-            for k in range(0, y_dim):
-                curr_place_val = (1/(2*np.pi*sigma**2)) * np.exp(-((j - curr_x_center)**2 + (k - curr_y_center)**2) / (2*sigma**2))
-                curr_place_val = curr_place_val / 0.00611658 # normalized for sigma = 2.5
-                p_centers[k][j] = p_centers[k][j] + curr_place_val
-    plt.figure(figsize=(5,5))
-    plt.imshow(p_centers, cmap='hot')
-    plt.gca().invert_yaxis()
-    
-plot_centers(place_cells_A, dist_thresh)
-plot_centers(place_cells_B, dist_thresh)
-
 ########################### FUNCTIONS FOR RUNNING MODEL ############
-
-# updates place cell spiking and place activity matrices given spiking at current position x and y at current time index
-def evaluate_spiking(place_cell_spiking, place_activity, place_cells, x, y, time_idx):
-    for i in range(0, len(place_cells)):
-        curr_place_cell = place_cells[i]
-        place_cell_spiking[i, time_idx], place_activity[i, time_idx] = curr_place_cell.evaluate_spiking(x[time_idx], y[time_idx])
-    return place_cell_spiking, place_activity
 
 def update_neuron_activity(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx,vy,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record):
     
@@ -272,39 +243,48 @@ def flow_full_model_with_blocks(x, y, vx,vy,time_ind,num_blocks,a,spike,spiking,
     # keep track of grid activity for each block
     r_exp_blocks = np.zeros((num_blocks,160,160))
     
-    # run model
-    for itter in range(1,time_ind,1): 
-        if time_ind >= time_ind/2:
-            mapA = False
-        else:
-            mapA = True 
+    # run model with map A
+    for itter in range(1,time_ind/2,1): 
+        # print block number
+        if itter == 1:
+            print("Block: %s" % (1,))        
         # print iteration
         if np.mod(itter,1000) == 0:
             print("Iteration: %s" % (itter,))
         # get current velocity
         vx1 = vx[itter]
         vy1 = vy[itter]
-        if mapA:
-            # get current spiking/activity
-            place_cell_spiking_A, place_activity_A = evaluate_spiking(place_cell_spiking_A, place_activity_A, place_cells_A, x, y, itter)
-            curr_place_activity_A = place_activity_A[:, itter]
-            # reshape for use in update neuron activity function
-            curr_place_activity_A = curr_place_activity_A.reshape((1,16)) 
-            # update neuron activity for grid cells
-            [r,r_field, r_l, r_u, r_d, r_r,sna_eachlayer, w_pg_A] = update_neuron_activity_with_place(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx1,vy1,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record,curr_place_activity_A, w_pg_A)
-        else:
-            # get current spiking/activity
-            place_cell_spiking_B, place_activity_B = evaluate_spiking(place_cell_spiking_B, place_activity_B, place_cells_B, x, y, itter)
-            curr_place_activity_B = place_activity_B[:, itter]
-            # reshape for use in update neuron activity function
-            curr_place_activity_B = curr_place_activity_B.reshape((1,16)) 
-            # update neuron activity for grid cells
-            [r,r_field, r_l, r_u, r_d, r_r,sna_eachlayer, w_pg_B] = update_neuron_activity_with_place(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx1,vy1,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record,curr_place_activity_B, w_pg_B)
-
-        # grab r matrix after map changes
-        if itter == time_ind/2 + 100:
-            r_exp_blocks[0, :, :] = r[0, :, :]
-        elif itter == time_ind - 1:
+        # get current spiking/activity
+        place_cell_spiking_A, place_activity_A = PCU.evaluate_spiking(place_cell_spiking_A, place_activity_A, place_cells_A, x, y, itter)
+        curr_place_activity_A = place_activity_A[:, itter]
+        # reshape for use in update neuron activity function
+        curr_place_activity_A = curr_place_activity_A.reshape((1,16)) 
+        # update neuron activity for grid cells
+        [r,r_field, r_l, r_u, r_d, r_r,sna_eachlayer, w_pg_A] = update_neuron_activity_with_place(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx1,vy1,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record,curr_place_activity_A, w_pg_A)
+        # grab r matrix right before map changes
+        if itter == time_ind/2 - 1:
+            r_exp_blocks[1, :, :] = r[0, :, :]
+    
+    # run model with map B halfway through simulation
+    for itter in range(time_ind/2, time_ind,1):
+        # print block number
+        if itter == time_ind/2:
+            print("Block: %s" % (2,))
+        # print iteration
+        if np.mod(itter,1000) == 0:
+            print("Iteration: %s" % (itter,))
+        # get current velocity
+        vx1 = vx[itter]
+        vy1 = vy[itter]        
+        # get current spiking/activity
+        place_cell_spiking_B, place_activity_B = PCU.evaluate_spiking(place_cell_spiking_B, place_activity_B, place_cells_B, x, y, itter)
+        curr_place_activity_B = place_activity_B[:, itter]
+        # reshape for use in update neuron activity function
+        curr_place_activity_B = curr_place_activity_B.reshape((1,16)) 
+        # update neuron activity for grid cells
+        [r,r_field, r_l, r_u, r_d, r_r,sna_eachlayer, w_pg_B] = update_neuron_activity_with_place(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx1,vy1,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record,curr_place_activity_B, w_pg_B)
+        # grab r matrix right after map changes
+        if itter == time_ind/2+100:
             r_exp_blocks[1, :, :] = r[0, :, :]
         
     return r, r_exp_blocks, sna_eachlayer,w_pg_A, place_cell_spiking_A, place_activity_A, w_pg_B, place_cell_spiking_B, place_activity_B
@@ -312,8 +292,7 @@ def flow_full_model_with_blocks(x, y, vx,vy,time_ind,num_blocks,a,spike,spiking,
 ############################ RUN EXPERIMENT #######################
 
 # initialize grid pattern (no traj)
-status='Initializing Grid Activity in 4 Phases'
-print(status)
+print('Initializing Grid Activity in 4 Phases')
 singleneuronrec=False;
 # no velocity
 [r,r_field,r_r,r_l,r_d,r_u]=flow_neuron_activity(0,0,nflow0,1,a,spike,spiking,r, r_r, r_l, r_d, r_u,singleneuronrec)
@@ -327,8 +306,7 @@ singleneuronrec=False;
 # run with trajectory using place cells and light switches
 def run_light_switch_experiment(x,y,vx,vy,time_ind,num_blocks,a,spike,spiking,r,r_r,r_l,r_d,r_u,singleneuronrec,w_pg_A, place_cells_A, place_cell_spiking_A, place_activity_A,w_pg_B, place_cells_B, place_cell_spiking_B, place_activity_B):
     singleneuronrec=True
-    status='Running Model with Trajectory, Place Cells, and Light Switches'
-    print(status)
+    print('Running Model with Trajectory, Place Cells, and Light Switches')
     # run model
     [r, r_exp_blocks, sna_eachlayer, w_pg_A, place_cell_spiking_A, place_activity_A,w_pg_B, place_cell_spiking_B, place_activity_B] = flow_full_model_with_blocks(x, y, vx,vy,time_ind,num_blocks,a,spike,spiking,r, r_r, r_l, r_d, r_u,singleneuronrec, w_pg_A, place_cells_A, place_cell_spiking_A, place_activity_A,w_pg_B, place_cells_B, place_cell_spiking_B, place_activity_B)
     
@@ -343,20 +321,9 @@ for curr_block_num in range(0, num_blocks):
     end_block = start_block + block_length
     sna_eachlayer_blocks[curr_block_num,:,:] = sna_eachlayer[0, :, start_block:end_block]
 
-###################### PLOT RESULTS ###############################
+## calculate single neuron spiking results
 
-# plot activity level from r matrix
-plt.figure(figsize=(5,5))
-plt.imshow(r_exp_blocks[0], cmap='hot')
-plt.title('Activity Matrix for Block 1')
-plt.gca().invert_yaxis()
-
-plt.figure(figsize=(5,5))
-plt.imshow(r_exp_blocks[1], cmap='hot')
-plt.title('Activity Matrix for Block 2')
-plt.gca().invert_yaxis()
-
-# calculate sns
+# calculate sns overall
 sns_eachlayer=np.zeros((sna_eachlayer.shape))
 print('Calculating overall single neuron spiking results...')
 for inds in range(0,np.size(sna_eachlayer,2),1):
@@ -364,16 +331,7 @@ for inds in range(0,np.size(sna_eachlayer,2),1):
     
 sns_eachlayer=sns_eachlayer.astype('bool')
 
-# plot sns overall
-x_ind = np.reshape(x_ind,(x_ind.size, 1))
-y_ind = np.reshape(y_ind,(y_ind.size, 1))
-"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
-print('Plotting overall spiking results over trajectory...')
-plt.figure(figsize=(5,5))
-plt.plot(x,y)
-plt.plot(x_ind[sns_eachlayer[0,0,0:np.size(x_ind)]]*spatial_scale, y_ind[sns_eachlayer[0,0,0:np.size(x_ind)]]*spatial_scale,'r.')
-
-## plot sns for block 1
+# calculate sns for block 1
 sna_eachlayer_block1 = sna_eachlayer_blocks[0,:,:]
 sna_eachlayer_block1 = sna_eachlayer_block1.reshape((1,3,block_length))
 sns_eachlayer_block1=np.zeros((1,3,block_length))
@@ -383,19 +341,7 @@ for inds in range(0,block_length,1):
     
 sns_eachlayer_block1=sns_eachlayer_block1.astype('bool')
 
-x_ind = np.reshape(x_ind,(x_ind.size, 1))
-y_ind = np.reshape(y_ind,(y_ind.size, 1))
-#"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
-print('Plotting grid cell results over trajectory for block 1...')
-x1 = x[:block_length]
-y1 = y[:block_length]
-x_ind1 = x_ind[:block_length]
-y_ind1 = y_ind[:block_length]
-plt.figure(figsize=(5,5))
-plt.plot(x1,y1)
-plt.plot(x_ind1[sns_eachlayer_block1[0,0,0:np.size(x_ind1)]]*spatial_scale, y_ind1[sns_eachlayer_block1[0,0,0:np.size(x_ind1)]]*spatial_scale,'r.')
-
-## plot sns for block 2
+# calculate sns for block 2
 sna_eachlayer_block2 = sna_eachlayer_blocks[1,:,:]
 sna_eachlayer_block2 = sna_eachlayer_block2.reshape((1,3,block_length))
 sns_eachlayer_block2=np.zeros((1,3,block_length))
@@ -405,21 +351,53 @@ for inds in range(0,block_length,1):
     
 sns_eachlayer_block2=sns_eachlayer_block2.astype('bool')
 
-#"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
-print('Plotting grid cell results over trajectory for block 2...')
-x2 = x[block_length:block_length*2]
-y2 = y[block_length:block_length*2]
-x_ind2 = x_ind[block_length:block_length*2]
-y_ind2 = y_ind[block_length:block_length*2]
-plt.figure(figsize=(5,5))
-plt.plot(x2,y2)
-plt.plot(x_ind2[sns_eachlayer_block2[0,0,0:np.size(x_ind2)]]*spatial_scale, y_ind2[sns_eachlayer_block2[0,0,0:np.size(y_ind2)]]*spatial_scale,'r.')
+###################### PLOT RESULTS ###############################
+
+# plot activity level from r matrix
+#plt.figure(figsize=(5,5))
+#plt.imshow(r_exp_blocks[0], cmap='hot')
+#plt.title('Activity Matrix for Block 1')
+#plt.gca().invert_yaxis()
+
+#plt.figure(figsize=(5,5))
+#plt.imshow(r_exp_blocks[1], cmap='hot')
+#plt.title('Activity Matrix for Block 2')
+#plt.gca().invert_yaxis()
+    
+# plot sns overall
+#x_ind = np.reshape(x_ind,(x_ind.size, 1))
+#y_ind = np.reshape(y_ind,(y_ind.size, 1))
+#print('Plotting overall spiking results over trajectory...')
+#plt.figure(figsize=(5,5))
+#plt.plot(x,y)
+#plt.plot(x_ind[sns_eachlayer[0,0,0:np.size(x_ind)]]*spatial_scale, y_ind[sns_eachlayer[0,0,0:np.size(x_ind)]]*spatial_scale,'r.')
+
+# plot sns for block 1
+#x_ind = np.reshape(x_ind,(x_ind.size, 1))
+#y_ind = np.reshape(y_ind,(y_ind.size, 1))
+#print('Plotting grid cell results over trajectory for block 1...')
+#x_block1 = x[:block_length]
+#y_block1 = y[:block_length]
+#x_ind_block1 = x_ind[:block_length]
+#y_ind_block1 = y_ind[:block_length]
+#plt.figure(figsize=(5,5))
+#plt.plot(x_block1,y_block1)
+#plt.plot(x_ind_block1[sns_eachlayer_block1[0,0,0:np.size(x_ind_block1)]]*spatial_scale, y_ind_block1[sns_eachlayer_block1[0,0,0:np.size(x_ind_block1)]]*spatial_scale,'r.')
+
+# plot sns for block 2
+#print('Plotting grid cell results over trajectory for block 2...')
+#x_block2 = x[block_length:block_length*2]
+#y_block2 = y[block_length:block_length*2]
+#x_ind_block2 = x_ind[block_length:block_length*2]
+#y_ind_block2 = y_ind[block_length:block_length*2]
+#plt.figure(figsize=(5,5))
+#plt.plot(x_block2,y_block2)
+#plt.plot(x_ind_block2[sns_eachlayer_block2[0,0,0:np.size(x_ind_block2)]]*spatial_scale, y_ind_block2[sns_eachlayer_block2[0,0,0:np.size(y_ind_block2)]]*spatial_scale,'r.')
 
 # save variables/arrays
 var_out = dict()
-for i_vars in ('x', 'y', 'x_ind', 'y_ind', 'sna_eachlayer', 'sns_eachlayer', 'spatial_scale', 'r'):
+for i_vars in ('x', 'y', 'x_ind', 'y_ind', 'x_block2', 'x_ind_block2', 'y_block2', 'y_ind_block2', 'sna_eachlayer', 'sns_eachlayer', 'sna_eachlayer_blocks', 'sns_eachlayer_block1', 'sns_eachlayer_block2', 'spatial_scale', 'r', 'r_exp_blocks'):
     var_out[i_vars] = locals()[i_vars]
 cwd = os.getcwd()
-io.savemat('grid_and_place_20min_1switch', var_out)
-
+io.savemat('grid_and_place_testing_20min_2blocks', var_out)
 
