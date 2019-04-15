@@ -7,7 +7,7 @@ Created on Fri Nov 09 11:36:34 2018
 
 EP_XW_ND_Model
 
-@author: ronwd
+@author: ronwd, Zach Sheldon
 """
 
 import pyfftw
@@ -19,8 +19,9 @@ import matplotlib.pyplot as plt
 import EP_XW_ND_RWD_SetupNetwork as SN
 import EP_XW_ND_RWD_RunNetwork as RN
 from place_cell import PlaceCell
+import place_cell_utilities as PCU
 import pickle
-np.random.seed(1234)
+np.random.seed(1)
 
 UNDEF = -999;
 
@@ -39,6 +40,7 @@ num_minutes = 20
 # Place Cell Parameters
 n_place_cells = 16 # number of place cells
 sigma = 5.0 # standard deviation for Gaussian place fields
+norm_const = 0.00636371 # normalization constant for place cells with sigma = 5.0
 x_dim = 130 # x dimension for environment - cm
 y_dim = 130 # y dimension for environment - cm
 dist_thresh = 20 # min euclidean distance between place cell centers - cm
@@ -86,11 +88,13 @@ rinit = 1e-3;
 # Trajectory Parameters/Get Trajectory Data
 [x,y,x_ind,y_ind, x_of_bins,y_of_bins,vx,vy,spatial_scale, boundaries, time_ind, traj_filename] = SN.get_trajectory('Trajectory_Data_2_full',dt, num_minutes);
 [x2,y2,x_ind2,y_ind2, x_of_bins2,y_of_bins2,vx2,vy2,spatial_scale2, boundaries2, time_ind2, traj_filename2] = SN.get_trajectory('Trajectory_Data_6_full',dt, num_minutes);
+
 # update x and y to be interpolated 
 x = x_ind * spatial_scale
 y = y_ind * spatial_scale
 x2= x_ind2 * spatial_scale2
 y2 = y_ind2 * spatial_scale2
+
 #inhibition length scales
 l = SN.set_inhib_length(h,lexp,lmin,lmax)
 l2 = SN.set_inhib_length(h,lexp,lmin,lmax)
@@ -109,112 +113,26 @@ w_pg_b = SN.setup_pg(1, n, n_place_cells, rand_weights_max)
 
 ############################ PLACE CELL SETUP ##########################
 
-# helper function for checking if place centers are too close
-def check_centers(p_cells, dist_thresh, rand_x_center, rand_y_center):
-    for i in range(0, len(p_cells)):
-        # get current place cell
-        curr_pcell = p_cells[i]
-        curr_x_center, curr_y_center = curr_pcell.get_centers() 
-        curr_dist = np.sqrt((rand_x_center - curr_x_center)**2 + (rand_y_center - curr_y_center)**2)
-        # if too close, return false
-        if curr_dist <= dist_thresh:
-            return False
-        else:
-            # check other place cells
-            continue
-    # if no other centers are too close, return true
-    return True
-
-# helper function for creating place centers
-def generate_centers(dist_thresh, p_cells):
-    # generate random centers
-    rand_x_center = np.random.randint(low=0, high=x_dim)
-    rand_y_center = np.random.randint(low=0, high=y_dim)
-    
-    # check if the random centers are too close to other place cells
-    while check_centers(p_cells, dist_thresh, rand_x_center, rand_y_center) == False:
-        rand_x_center  = np.random.randint(low=0, high=x_dim)
-        rand_y_center = np.random.randint(low=0, high=y_dim)
-
-    return rand_x_center, rand_y_center
-
-# creates place cells
-def create_place_cells(n_place_cells, sigma, x_dim, y_dim, dist_thresh, map_b=False):
-    print('Generating place cells...')
-    p_cells = []
-    if map_b: # create double the number of place cells
-        n_place_cells = int(2.0*n_place_cells)
-    for i in range(0, n_place_cells):
-        # randomly create place centers
-        rand_x_center, rand_y_center = generate_centers(dist_thresh, p_cells)
-        # create place cell and add to list of other cells
-        p_cells.append(PlaceCell(rand_x_center, rand_y_center, sigma, x_dim, y_dim))
-    return p_cells
-
-# plot gaussian place cell centers
-def plot_centers(place_cells, dist_thresh):
-    # check if any are within distance threshold
-    for i in range(0, n_place_cells):
-        curr_x_center, curr_y_center = place_cells[i].get_centers()
-        for j in range(i+1, n_place_cells):
-            curr_x_to_compare, curr_y_to_compare = place_cells[j].get_centers()
-            curr_dist = np.sqrt((curr_x_to_compare - curr_x_center)**2 + (curr_y_to_compare - curr_y_center)**2)
-            if curr_dist <= dist_thresh:
-                print('Place centers too close: ', (curr_x_center, curr_y_center), (curr_x_to_compare, curr_y_to_compare), int(curr_dist))
-
-    p_centers = np.zeros((x_dim, y_dim))
-    for i in range(0, len(place_cells)):
-        curr_x_center, curr_y_center = place_cells[i].get_centers()
-        for j in range(0, x_dim):
-            for k in range(0, y_dim):
-                curr_place_val = (1/(2*np.pi*sigma**2)) * np.exp(-((j - curr_x_center)**2 + (k - curr_y_center)**2) / (2*sigma**2))
-                curr_place_val = curr_place_val / 0.00611658 # normalized for sigma = 2.5
-                p_centers[k][j] = p_centers[k][j] + curr_place_val
-    plt.figure(figsize=(5,5))
-    plt.imshow(p_centers, cmap='hot')
-    plt.gca().invert_yaxis()
-
-# updates place cell spiking and place activity matrices given spiking at current position x and y at current time index
-def evaluate_spiking(place_cell_spiking, place_activity, place_cells, x, y, time_idx):
-    for i in range(0, len(place_cells)):
-        curr_place_cell = place_cells[i]
-        place_cell_spiking[i, time_idx], place_activity[i, time_idx] = curr_place_cell.evaluate_spiking(x[time_idx], y[time_idx])
-    return place_cell_spiking, place_activity
-
-# get spiking positions
-def get_spiking_positions(place_cells):
-    x_spiking_positions = []
-    y_spiking_positions = []
-    for i in range(0, len(place_cells)):
-        curr_place_cell = place_cells[i]
-        curr_x_spiking_pos, curr_y_spiking_pos = curr_place_cell.get_spike_positions()
-        x_spiking_positions.append(curr_x_spiking_pos)
-        y_spiking_positions.append(curr_y_spiking_pos)
-    return x_spiking_positions, y_spiking_positions
-
-# plot spiking positions over trajectory
-def plot_spike_positions(x_spiking_positions, y_spiking_positions, n_place_cells):
-    print('Plotting spike positions over trajectory...')
-    # plot trajectory
-    plt.figure(figsize=(5,5))
-    plt.plot(x, y)
-    for i in range(0, n_place_cells):
-        curr_x_pos = x_spiking_positions[i]
-        curr_y_pos = y_spiking_positions[i]
-        for j in range(0, len(curr_x_pos)):
-            plt.plot(curr_x_pos[j], curr_y_pos[j], 'ro')
-    plt.show()
-
 # create place cells for both maps 
-place_cells = create_place_cells(n_place_cells, sigma, x_dim, y_dim, dist_thresh,map_b=True)
+place_cells = PCU.create_place_cells(n_place_cells, sigma, x_dim, y_dim, dist_thresh,map_b=True)
 place_cells_a = place_cells[0:16]
 place_cells_b = place_cells[16:32]
+
 # create arrays for keeping track of spiking and overall activity 
 place_cell_spiking_a, place_activity_a = np.zeros((n_place_cells, len(x))), np.zeros((n_place_cells, len(x)))
 place_cell_spiking_b, place_activity_b = np.zeros((n_place_cells, len(x))), np.zeros((n_place_cells, len(x)))
 
-plot_centers(place_cells_a, dist_thresh)
-plot_centers(place_cells_b, dist_thresh)
+PCU.plot_centers(place_cells_a, dist_thresh)
+PCU.plot_centers(place_cells_b, dist_thresh)
+
+# save place cells for testing simulation later
+pickle_out = open("place_cells_A.pickle", "wb") 
+pickle.dump(place_cells_a, pickle_out)
+pickle_out.close()
+
+pickle_out = open("place_cells_B.pickle", "wb") 
+pickle.dump(place_cells_b, pickle_out)
+pickle_out.close()
 
 "****************************************************************************"
 "****************************NETWORK DYNAMICS********************************"
@@ -249,9 +167,6 @@ spike = 0
 #########################################################################
 ######## All functions used for flowing activity in the network###########
 ##########################################################################
-
-
-#ones that need global variables of Main to prevent absurd input argument lengths
 
 def update_neuron_activity(r, r_r, r_l, r_d, r_u,r_fft_plan, r_ifft_plan, vx,vy,r_field,spike,spiking,itter,singleneuronrec,time_ind,sna_eachlayer,row_record,col_record):
     
@@ -365,8 +280,8 @@ def flow_full_model(x, y, vx,vy,time_ind,a,spike,spiking,r, r_r, r_l, r_d, r_u,s
         row_record = col_record = sna_eachlayer = -999;
          
     for itter in range(1,time_ind,1): 
-        # update place cell activity matrices
-        place_cell_spiking, place_activity = evaluate_spiking(place_cell_spiking, place_activity, place_cells, x, y, itter)
+        # update place cell activity matrices based on current velocity/position
+        place_cell_spiking, place_activity = PCU.evaluate_spiking(place_cell_spiking, place_activity, place_cells, x, y, itter)
         curr_place_activity = place_activity[:, itter]
         curr_place_activity = curr_place_activity.reshape((1,16))
         if np.mod(itter,1000) == 0:
@@ -403,48 +318,43 @@ print(status)
 [r, r_field, r_r, r_l, r_d, r_u, sna_eachlayer, occ, w_pg_a]=flow_full_model(x,y,vx, vy, time_ind, a, spike, spiking,r, r_r, r_l, r_d, r_u, singleneuronrec, place_cell_spiking_a, place_activity_a,w_pg_a, place_cells_a);
 t_run2 = time.time()-t0 
 
+# calculate single neuron spiking results
+sns_eachlayer=np.zeros((sna_eachlayer.shape))
+print('Calculating single neuron spiking results...')
+for inds in range(0,np.size(sna_eachlayer,2),1):
+    sns_eachlayer[:,:,inds] = sna_eachlayer[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
+    
+sns_eachlayer=sns_eachlayer.astype('bool')
+
+########################### PLOT RESULTS #####################################
+
 # plot place fields
 #print('Plotting place centers for map A...')
 #plot_centers(place_cells_a, dist_thresh)
 
-# plot place cell results
-#print('Plotting place cell results...')
-#x_spiking_positions, y_spiking_positions = get_spiking_positions(place_cells_a)
-#plot_spike_positions(x_spiking_positions, y_spiking_positions, n_place_cells) 
-
-# plot grid cell results
+## plot grid cell results
 #print('Plotting grid cell results...')
 #for z in range(0,h,1):
 #    plt.figure(4)
 #    plt.imshow(r[z,:,:],cmap='hot')
 #    plt.show()
-#
-#sns_eachlayer=np.zeros((sna_eachlayer.shape))
-#print('Plotting single neuron spiking results...')
-#for inds in range(0,np.size(sna_eachlayer,2),1):
-#    sns_eachlayer[:,:,inds] = sna_eachlayer[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
-#    
-#sns_eachlayer=sns_eachlayer.astype('bool')
-#
+
+
+# plot single neuron spiking results
 #x_ind = np.reshape(x_ind,(x_ind.size, 1))
 #y_ind = np.reshape(y_ind,(y_ind.size, 1))
-#"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
 #print('Plotting grid cell results over trajectory...')
 #for z in range(0,3,1): 
 #     plt.figure(z, figsize=(5,5))
 #     plt.plot(x,y)
 #     plt.plot(x_ind[sns_eachlayer[0,z,0:np.size(x_ind)]]*spatial_scale, y_ind[sns_eachlayer[0,z,0:np.size(x_ind)]]*spatial_scale,'r.')
 
-# save variables and arrays
+# save variables
 var_out = dict()
-for i_vars in ('x', 'y', 'x_ind', 'y_ind', 'sna_eachlayer', 'spatial_scale', 'r', 'w_pg_a'):
+for i_vars in ('x', 'y', 'x_ind', 'y_ind', 'sna_eachlayer', 'sns_eachlayer', 'spatial_scale', 'r', 'w_pg_a'):
     var_out[i_vars] = locals()[i_vars]
 cwd = os.getcwd()
-io.savemat('grid_and_place_simulation_map_a_20min', var_out)
-
-pickle_out = open("place_cells_A.pickle", "wb") 
-pickle.dump(place_cells_a, pickle_out)
-pickle_out.close()
+io.savemat('grid_and_place_training_map_a_20min', var_out)
 
 ################################ Run model with second set of place cells #####################
 
@@ -469,45 +379,41 @@ print(status)
 [r2, r_field2, r_r2, r_l2, r_d2, r_u2, sna_eachlayer2, occ2, w_pg_b]=flow_full_model(x2,y2,vx2, vy2, time_ind2, a2, spike, spiking,r2, r_r2, r_l2, r_d2, r_u2, singleneuronrec, place_cell_spiking_b, place_activity_b,w_pg_b, place_cells_b);
 t_run2 = time.time()-t0 
 
+# calculate single neuron spiking results
+sns_eachlayer2=np.zeros((sna_eachlayer2.shape))
+print('Calculating single neuron spiking results...')
+for inds in range(0,np.size(sna_eachlayer2,2),1):
+    sns_eachlayer2[:,:,inds] = sna_eachlayer2[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
+    
+sns_eachlayer2=sns_eachlayer2.astype('bool')
+
+####################### PLOT RESULTS ###################################
+
 # plot place cell results
 #print('Plotting place centers for map B...')
 #plot_centers(place_cells_b, dist_thresh)
 
-# plot place cell results
-#print('Plotting place cell results...')
-#x_spiking_positions2, y_spiking_positions2 = get_spiking_positions(place_cells_b)
-#plot_spike_positions(x_spiking_positions2, y_spiking_positions2, n_place_cells) 
-
-# plot grid cell results
+## plot grid cell results
 #print('Plotting grid cell results...')
 #for z in range(0,h,1):
 #    plt.figure(4)
 #    plt.imshow(r2[z,:,:],cmap='hot')
 #    plt.show()
-#
-#sns_eachlayer2=np.zeros((sna_eachlayer2.shape))
-#print('Plotting single neuron spiking results...')
-#for inds in range(0,np.size(sna_eachlayer2,2),1):
-#    sns_eachlayer2[:,:,inds] = sna_eachlayer2[:,:,inds] > stats.uniform.rvs(0,1,size = h) 
-#    
-#sns_eachlayer2=sns_eachlayer2.astype('bool')
-#
+
+
+# plot single neuron spiking results
 #x_ind2 = np.reshape(x_ind2,(x_ind2.size, 1))
 #y_ind2 = np.reshape(y_ind2,(y_ind2.size, 1))
-#"Changed so that have to alter second index to plot other recordings, in order 0 is dead center, 1 is down and left, 2 is up and right"
 #print('Plotting grid cell results over trajectory...')
 #for z in range(0,3,1): 
 #     plt.figure(z, figsize=(5,5))
 #     plt.plot(x2,y2)
 #     plt.plot(x_ind2[sns_eachlayer2[0,z,0:np.size(x_ind2)]]*spatial_scale2, y_ind2[sns_eachlayer2[0,z,0:np.size(x_ind2)]]*spatial_scale2,'r.')
 
-# save variables and arrays
+# save variables
 var_out_b = dict()
-for i_vars in ('x2', 'y2', 'x_ind2', 'y_ind2', 'sna_eachlayer2', 'spatial_scale2', 'r2', 'w_pg_b'):
+for i_vars in ('x2', 'y2', 'x_ind2', 'y_ind2', 'sna_eachlayer2', 'sns_eachlayer2', 'spatial_scale2', 'r2', 'w_pg_b'):
     var_out_b[i_vars] = locals()[i_vars]
 cwd = os.getcwd()
-io.savemat('grid_and_place_simulation_map_b_20min', var_out_b)
+io.savemat('grid_and_place_training_map_b_20min', var_out_b)
 
-pickle_out = open("place_cells_B.pickle", "wb") 
-pickle.dump(place_cells_b, pickle_out)
-pickle_out.close()
